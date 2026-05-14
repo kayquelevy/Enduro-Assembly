@@ -1,167 +1,161 @@
-# =============================================================================
-# Enduro RV32I - Prova de Conceito (Etapa 1 + início da Etapa 2)
-# Arquitetura de Computadores - 2026
-# Autores: Kayque de Jesus Levy Rodrigues (6593272)
-#          Miguel Nepomuceno Gil (5196718)
+# Enduro RV32I - Etapa 2: pista rolando + obstaculos
+# Kayque Rodrigues (6593272) e Miguel Gil (5196718)
 #
-# Descricao:
-#   Game loop minimo do jogo Enduro em Assembly RV32I para o simulador RARS.
-#   Esta versao implementa apenas o esqueleto do laco principal:
-#     - Leitura de tecla via syscall 12 (read char)
-#     - Atualizacao da posicao do carro em registrador
-#     - Renderizacao textual da pista via syscall 4 (print string)
-#     - Contador de frames
-#   Modulos de obstaculos, colisao e placar serao adicionados nas Etapas 2 e 3.
+# Novidades em relacao a entrega anterior:
+#   - Pista com 8 linhas (movimento em Y simulado por scroll)
+#   - Obstaculos 'X' que descem junto com a pista
+#   - Gerador pseudo-aleatorio (LCG) para posicionar obstaculos
+#   - Tela limpa a cada frame
 #
-# Convencoes de registradores (definidas para todo o projeto):
-#   s0 = posicao X do carro (0..LARGURA_PISTA-1)
-#   s1 = velocidade do carro (reservado p/ Etapa 2)
-#   s2 = score / placar       (reservado p/ Etapa 3)
+# Controles: 'a' esquerda, 'd' direita, ' ' (espaco) avancar, 'q' sair.
+#
+# Estado em registradores:
+#   s0 = posicao X do carro (0..8)
+#   s1 = semente do LCG (RNG)
+#   s2 = score (Etapa 3 futura)
 #   s3 = contador de frames
-#   s4 = flag de "rodando" (1 = jogo ativo, 0 = sair)
-#
-# Controles:
-#   'a' -> mover carro para esquerda
-#   'd' -> mover carro para direita
-#   'q' -> sair do jogo
-#   qualquer outra tecla -> apenas avanca o frame
-#
-# Como executar no RARS:
-#   1) Abrir RARS, carregar este arquivo (File > Open)
-#   2) Assemble (F3)
-#   3) Run (F5)
-#   4) Ao ler tecla, focar a aba "Run I/O" e digitar a, d ou q + Enter
-# =============================================================================
+#   s4 = flag rodando
+#   s5 = endereco base do vetor de obstaculos
 
-# -----------------------------------------------------------------------------
-# Secao de dados: strings constantes da pista
-# -----------------------------------------------------------------------------
 .data
 
-# Constantes de layout textual da pista.
-# A pista tem 9 colunas internas (entre as bordas '|').
-# A posicao inicial do carro eh a coluna 4 (centro).
+# Vetor de 8 posicoes: cada byte guarda a coluna do obstaculo naquela
+# linha da pista. Valor 255 (0xFF) = linha sem obstaculo.
+obstaculos:     .byte 255, 255, 255, 255, 255, 255, 255, 255
 
-borda_top:      .asciz "+---------+\n"
-borda_bot:      .asciz "+---------+\n"
-linha_vazia:    .asciz "|         |\n"
+# Strings de UI
+borda:          .asciz "+---------+\n"
+linha_buffer:   .asciz "|         |\n"   # buffer reescrito a cada linha
 
-# Buffer de uma linha da pista que sera modificado em tempo de execucao
-# para desenhar o carro 'C' na coluna correta.
-# Layout (indices):
-#   0='|', 1..9 = colunas internas, 10='|', 11='\n', 12=0
-linha_carro:    .asciz "|         |\n"
+# Limpa tela com sequencia ANSI: ESC[2J ESC[H
+limpa_tela:     .asciz "\033[2J\033[H"
 
-# Mensagens de UI
-msg_titulo:     .asciz "=== ENDURO RV32I (Prova de Conceito) ===\n"
-msg_controles:  .asciz "Controles: 'a'=esq  'd'=dir  'q'=sair\n\n"
-msg_frame:      .asciz "Frame: "
-msg_pos:        .asciz "  | Pos X: "
+msg_titulo:     .asciz "=== ENDURO RV32I (Etapa 2) ===\n"
+msg_controles:  .asciz "'a'/'d'=lados  ' '=avancar  'q'=sair\n"
+msg_frame:      .asciz "\nFrame: "
+msg_pos:        .asciz "  Pos X: "
 msg_nl:         .asciz "\n"
 msg_fim:        .asciz "\n=== Fim de jogo ===\n"
 
-# -----------------------------------------------------------------------------
-# Secao de codigo
-# -----------------------------------------------------------------------------
 .text
 .globl main
 
 main:
-    # ---------- Inicializacao do estado ----------
-    li   s0, 4              # posicao X inicial = 4 (centro da pista de 9 cols)
-    li   s1, 0              # velocidade (nao usada nesta etapa)
-    li   s2, 0              # score (nao usado nesta etapa)
-    li   s3, 0              # contador de frames = 0
-    li   s4, 1              # flag rodando = 1
+    li   s0, 4              # carro no centro
+    li   s1, 12345          # semente inicial do LCG
+    li   s2, 0
+    li   s3, 0
+    li   s4, 1
+    la   s5, obstaculos     # base do vetor de obstaculos
 
-    # Imprime cabecalho uma unica vez
+game_loop:
+    beqz s4, fim_jogo
+
+    jal  ra, render
+    jal  ra, debug_info
+    jal  ra, ler_input
+    jal  ra, atualizar
+
+    addi s3, s3, 1
+    j    game_loop
+
+# ---------------------------------------------------------------
+# render: limpa tela, imprime cabecalho, desenha as 8 linhas da pista
+# A linha 7 (ultima, mais perto do jogador) eh onde o carro aparece.
+# As outras linhas mostram apenas o obstaculo daquela linha.
+# ---------------------------------------------------------------
+render:
+    addi sp, sp, -8
+    sw   ra, 0(sp)
+    sw   s6, 4(sp)          # s6 = indice da linha sendo desenhada
+
+    la   a0, limpa_tela
+    li   a7, 4
+    ecall
+
     la   a0, msg_titulo
     li   a7, 4
     ecall
-    la   a0, msg_controles
+
+    la   a0, borda
     li   a7, 4
     ecall
 
-# =============================================================================
-# game_loop: laco principal do jogo
-# A cada iteracao:
-#   1) renderiza o frame atual
-#   2) imprime info de debug (frame, posicao)
-#   3) le uma tecla
-#   4) atualiza estado conforme a tecla
-#   5) incrementa contador de frames
-#   6) se s4 == 0, sai do laco
-# =============================================================================
-game_loop:
-    beqz s4, fim_jogo       # se flag rodando == 0, encerra
+    li   s6, 0              # comeca pela linha 0 (topo)
+render_loop:
+    li   t0, 8
+    beq  s6, t0, render_done
 
-    jal  ra, render         # desenha o frame
-    jal  ra, debug_info     # imprime "Frame: X | Pos X: Y"
-    jal  ra, ler_input      # le tecla -> a0
-    jal  ra, atualizar      # atualiza estado com base em a0
+    # Limpa o linha_buffer (12 bytes = "|         |\n\0")
+    jal  ra, reset_buffer
 
-    addi s3, s3, 1          # frame++
-    j    game_loop
+    # Carrega o obstaculo desta linha: obst = obstaculos[s6]
+    add  t0, s5, s6
+    lbu  t1, 0(t0)          # t1 = coluna do obstaculo (ou 255)
 
-# =============================================================================
-# render: desenha a pista textual atual
-#   - imprime borda superior
-#   - monta a linha do carro: coloca 'C' na coluna correspondente a s0
-#     (offset no buffer = 1 + s0, pois indice 0 eh a borda '|')
-#   - imprime a linha do carro
-#   - imprime borda inferior
-# Custo aproximado: ~70 instrucoes por frame (sem contar syscalls)
-# =============================================================================
-render:
-    addi sp, sp, -4
-    sw   ra, 0(sp)          # salva ra (vamos chamar ecall, mas tambem queremos
-                            # poder chamar render de dentro de game_loop)
+    li   t2, 255
+    beq  t1, t2, sem_obst   # 255 -> linha vazia
+    # Escreve 'X' na posicao do obstaculo: buffer[1 + t1] = 'X'
+    la   t3, linha_buffer
+    addi t3, t3, 1
+    add  t3, t3, t1
+    li   t4, 'X'
+    sb   t4, 0(t3)
+sem_obst:
 
-    # Borda superior
-    la   a0, borda_top
+    # Se for a ultima linha (linha 7), desenha tambem o carro
+    li   t0, 7
+    bne  s6, t0, sem_carro
+    la   t3, linha_buffer
+    addi t3, t3, 1
+    add  t3, t3, s0
+    li   t4, 'C'
+    sb   t4, 0(t3)
+sem_carro:
+
+    la   a0, linha_buffer
     li   a7, 4
     ecall
 
-    # Reseta a linha_carro para "|         |\n" antes de inserir o carro.
-    # Faz isso copiando da linha_vazia byte a byte (12 bytes incluindo \n e \0).
-    la   t0, linha_vazia
-    la   t1, linha_carro
-    li   t2, 12             # quantidade de bytes a copiar
-reset_loop:
-    beqz t2, reset_done
-    lbu  t3, 0(t0)
-    sb   t3, 0(t1)
-    addi t0, t0, 1
-    addi t1, t1, 1
-    addi t2, t2, -1
-    j    reset_loop
-reset_done:
+    addi s6, s6, 1
+    j    render_loop
+render_done:
 
-    # Insere 'C' na posicao correta: endereco = linha_carro + 1 + s0
-    la   t1, linha_carro
-    addi t1, t1, 1          # pular borda esquerda '|'
-    add  t1, t1, s0         # somar posicao X
-    li   t3, 'C'
-    sb   t3, 0(t1)
-
-    # Imprime linha do carro
-    la   a0, linha_carro
+    la   a0, borda
     li   a7, 4
     ecall
 
-    # Borda inferior
-    la   a0, borda_bot
-    li   a7, 4
-    ecall
-
+    lw   s6, 4(sp)
     lw   ra, 0(sp)
-    addi sp, sp, 4
+    addi sp, sp, 8
     jr   ra
 
-# =============================================================================
-# debug_info: imprime "Frame: <s3>  | Pos X: <s0>\n"
-#   Ajuda na medicao de instrucoes por frame durante a Etapa 4.
-# =============================================================================
+# ---------------------------------------------------------------
+# reset_buffer: restaura linha_buffer para "|         |\n"
+# ---------------------------------------------------------------
+reset_buffer:
+    la   t0, linha_buffer
+    li   t1, '|'
+    sb   t1, 0(t0)
+    li   t1, ' '
+    sb   t1, 1(t0)
+    sb   t1, 2(t0)
+    sb   t1, 3(t0)
+    sb   t1, 4(t0)
+    sb   t1, 5(t0)
+    sb   t1, 6(t0)
+    sb   t1, 7(t0)
+    sb   t1, 8(t0)
+    sb   t1, 9(t0)
+    li   t1, '|'
+    sb   t1, 10(t0)
+    li   t1, '\n'
+    sb   t1, 11(t0)
+    jr   ra
+
+# ---------------------------------------------------------------
+# debug_info: imprime Frame e Pos X
+# ---------------------------------------------------------------
 debug_info:
     addi sp, sp, -4
     sw   ra, 0(sp)
@@ -169,19 +163,15 @@ debug_info:
     la   a0, msg_frame
     li   a7, 4
     ecall
-
     mv   a0, s3
-    li   a7, 1              # print int
+    li   a7, 1
     ecall
-
     la   a0, msg_pos
     li   a7, 4
     ecall
-
     mv   a0, s0
     li   a7, 1
     ecall
-
     la   a0, msg_nl
     li   a7, 4
     ecall
@@ -190,59 +180,97 @@ debug_info:
     addi sp, sp, 4
     jr   ra
 
-# =============================================================================
-# ler_input: le um caractere do teclado e retorna em a0
-#   syscall 12 (read char) - retorna o codigo ASCII em a0
-# =============================================================================
 ler_input:
     li   a7, 12
     ecall
     jr   ra
 
-# =============================================================================
-# atualizar: recebe tecla em a0 e atualiza o estado
-#   'a' (97): se s0 > 0, decrementa s0
-#   'd' (100): se s0 < 8, incrementa s0   (LARGURA_PISTA - 1 = 8)
-#   'q' (113): zera s4 -> sai do loop
-#   outras: nada
-# =============================================================================
+# ---------------------------------------------------------------
+# atualizar: processa tecla e faz a pista "rolar"
+# A rolagem desloca todos os obstaculos uma linha para baixo
+# e gera um possivel novo obstaculo no topo.
+# ---------------------------------------------------------------
 atualizar:
+    addi sp, sp, -4
+    sw   ra, 0(sp)
+
     li   t0, 'a'
     beq  a0, t0, mover_esq
-
     li   t0, 'd'
     beq  a0, t0, mover_dir
-
     li   t0, 'q'
     beq  a0, t0, sair
-
-    jr   ra                 # tecla irrelevante: nao faz nada
+    # qualquer outra tecla (incluindo espaco) so avanca o frame
+    j    avancar_pista
 
 mover_esq:
     li   t0, 0
-    ble  s0, t0, atualizar_fim   # se s0 <= 0, nao move (limite esquerdo)
+    ble  s0, t0, avancar_pista
     addi s0, s0, -1
-    j    atualizar_fim
+    j    avancar_pista
 
 mover_dir:
-    li   t0, 8                   # 9 colunas (0..8) -> max = 8
-    bge  s0, t0, atualizar_fim
+    li   t0, 8
+    bge  s0, t0, avancar_pista
     addi s0, s0, 1
-    j    atualizar_fim
+    j    avancar_pista
 
 sair:
-    li   s4, 0                   # sinaliza fim de jogo
+    li   s4, 0
+    j    atualizar_fim
+
+# Rola a pista: obstaculos[i] = obstaculos[i-1], i de 7 ate 1
+# Depois gera um novo valor para obstaculos[0]
+avancar_pista:
+    li   t0, 7              # i = 7
+roll_loop:
+    beqz t0, roll_done
+    addi t1, t0, -1         # i-1
+    add  t2, s5, t1         # &obstaculos[i-1]
+    lbu  t3, 0(t2)
+    add  t2, s5, t0         # &obstaculos[i]
+    sb   t3, 0(t2)
+    addi t0, t0, -1
+    j    roll_loop
+roll_done:
+
+    # Gera novo obstaculo no topo
+    jal  ra, gerar_obstaculo
+    sb   a0, 0(s5)          # obstaculos[0] = a0
 
 atualizar_fim:
+    lw   ra, 0(sp)
+    addi sp, sp, 4
     jr   ra
 
-# =============================================================================
-# fim_jogo: imprime mensagem final e encerra programa
-# =============================================================================
+# ---------------------------------------------------------------
+# gerar_obstaculo: usa LCG para decidir se gera obstaculo e onde.
+# LCG classico: seed = seed * 1103515245 + 12345
+# Retorna em a0: 0-8 (coluna) ou 255 (sem obstaculo).
+# Probabilidade ~7/16 de obstaculo, ~9/16 de linha vazia.
+# ---------------------------------------------------------------
+gerar_obstaculo:
+    li   t0, 1103515245
+    mul  s1, s1, t0
+    li   t0, 12345
+    add  s1, s1, t0         # s1 = nova semente
+
+    # Pega bits 16-19 (4 bits) para sortear: srli + andi
+    srli t0, s1, 16
+    andi t0, t0, 0xF        # t0 in [0..15]
+
+    # Se t0 < 9, eh a coluna do obstaculo; senao, linha vazia (255)
+    li   t1, 9
+    bge  t0, t1, gerar_vazio
+    mv   a0, t0
+    jr   ra
+gerar_vazio:
+    li   a0, 255
+    jr   ra
+
 fim_jogo:
     la   a0, msg_fim
     li   a7, 4
     ecall
-
-    li   a7, 10                  # exit
+    li   a7, 10
     ecall
