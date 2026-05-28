@@ -7,10 +7,15 @@
 #     Display Width / Height: 512 / 512
 #     Base address: 0x10010000 (static data)
 #   Clica "Connect to Program", deixa a janela aberta
+#
+#   Tools -> Keyboard and Display MMIO Simulator:
+#     Clica "Connect to Program" (necessario para input nao-bloqueante)
+#     Foca na janela do MMIO Simulator (caixa de texto) ao apertar teclas
+#
 #   F3 (Assemble), F5 (Run)
 #
-# Controles: 'a'=esquerda, 'd'=direita, espaco=avancar, 'q'=sair
-# Aperta a tecla na aba Run I/O E DEPOIS ENTER.
+# Controles (na janela do MMIO Simulator): 'a'=esquerda, 'd'=direita, 'q'=sair
+# A pista anda sozinha; o input agora e nao-bloqueante.
 
 .eqv BITMAP_BASE 0x10010000
 .eqv LARGURA     64
@@ -87,15 +92,28 @@ main:
 game_loop:
     beqz s4, fim_jogo
 
-    jal  ra, atualizar_zebras
-    jal  ra, atualizar_inimigos
-    jal  ra, atualizar_jogador
-    jal  ra, hud_texto
+    # ---- LOGICA (input -> mover inimigos -> colisao) ----
     jal  ra, ler_input
     jal  ra, processar_tecla
     jal  ra, avancar_pista
     jal  ra, checar_colisao
     jal  ra, pontuar
+
+    # ---- RENDER (inimigos -> jogador -> faixas/bordas por cima) ----
+    jal  ra, atualizar_inimigos
+    jal  ra, atualizar_jogador
+    jal  ra, atualizar_zebras
+
+    # HUD textual a cada 8 frames para nao spammar o Run I/O
+    andi t0, s3, 0x7
+    bnez t0, gl_no_hud
+    jal  ra, hud_texto
+gl_no_hud:
+
+    # Delay ~80ms (~12fps) para a pista andar sozinha
+    li   a0, 80
+    li   a7, 32
+    ecall
 
     addi s3, s3, 1
     j    game_loop
@@ -396,9 +414,19 @@ hud_sf:
     addi sp, sp, 4
     jr   ra
 
+# ler_input: leitura nao-bloqueante via MMIO (Keyboard and Display MMIO Simulator)
+#   0xFFFF0000 = Receiver Control (bit 0 = Ready)
+#   0xFFFF0004 = Receiver Data (caractere; ler limpa o Ready)
+# Retorna a0 = caractere (ou 0 se nenhuma tecla)
 ler_input:
-    li   a7, 12
-    ecall
+    li   t0, 0xFFFF0000
+    lw   t1, 0(t0)
+    andi t1, t1, 1
+    beqz t1, li_none
+    lw   a0, 4(t0)
+    jr   ra
+li_none:
+    li   a0, 0
     jr   ra
 
 processar_tecla:
