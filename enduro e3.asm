@@ -52,7 +52,7 @@ ini_anterior:  .word 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
 tabela_cores:  .word COR_INIMIGO1, COR_INIMIGO2, COR_INIMIGO3, COR_INIMIGO4
 
 msg_titulo:    .asciz "=== ENDURO RV32I (Grafico) ===\n"
-msg_controles: .asciz "Aba Run I/O: 'a'/'d' lados, espaco avanca, 'q' sai\n"
+msg_controles: .asciz "Digite na janela do MMIO Simulator: 'a'=esq, 'd'=dir, 'q'=sair\n"
 msg_frame:     .asciz "Frame: "
 msg_vidas:     .asciz "  Vidas: "
 msg_score:     .asciz "  Score: "
@@ -92,20 +92,27 @@ main:
 game_loop:
     beqz s4, fim_jogo
 
-    # ---- LOGICA (input -> mover inimigos -> colisao) ----
+    # ---- INPUT todo frame (responsivo) ----
     jal  ra, ler_input
     jal  ra, processar_tecla
+
+    # ---- SCROLL da pista a cada 4 frames (inimigos descem mais devagar) ----
+    andi t0, s3, 0x3
+    bnez t0, gl_no_scroll
     jal  ra, avancar_pista
-    jal  ra, checar_colisao
     jal  ra, pontuar
+gl_no_scroll:
 
-    # ---- RENDER (inimigos -> jogador -> faixas/bordas por cima) ----
+    # Colisao checada todo frame (inclui countdown de invencibilidade)
+    jal  ra, checar_colisao
+
+    # ---- RENDER: inimigos -> zebras (faixa sobre inimigos) -> jogador (solido por cima) ----
     jal  ra, atualizar_inimigos
-    jal  ra, atualizar_jogador
     jal  ra, atualizar_zebras
+    jal  ra, atualizar_jogador
 
-    # HUD textual a cada 8 frames para nao spammar o Run I/O
-    andi t0, s3, 0x7
+    # HUD textual a cada 16 frames para nao spammar o Run I/O
+    andi t0, s3, 0xF
     bnez t0, gl_no_hud
     jal  ra, hud_texto
 gl_no_hud:
