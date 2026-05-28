@@ -664,7 +664,9 @@ ap_done:
     addi sp, sp, 4
     jr   ra
 
-# Gera inimigo: ~50% vazio, ~50% com coluna entre 18 e 40
+# Gera inimigo: ~50% vazio, ~50% com coluna em uma das duas faixas seguras
+# Faixas: esquerda {18, 20, 22, 24, 26} | direita {34, 36, 38, 40, 42}
+# Evita cols 28, 30, 32 que fariam o sprite 4px sobrepor a faixa central (31, 32)
 gerar_inimigo:
     li   t0, 1103515245
     mul  s1, s1, t0
@@ -675,15 +677,23 @@ gerar_inimigo:
     andi t1, t0, 1
     beqz t1, gi_vazio
 
-    # Coluna: bits 1..4 dao 0..15, *2 = 0..30, +18 = 18..48, satura em 40
-    # Coluna entre 18 e 42, sempre PAR (evita zebras e fica simetrico)
+    # Sorteia indice 0..9 (10 posicoes, 5 por faixa)
     srli t2, t0, 1
     andi t2, t2, 0xF        # 0..15
-    slli t2, t2, 1          # 0..30, sempre par
-    addi t2, t2, 18         # 18..48
-    li   t3, 42
-    ble  t2, t3, gi_ok
-    li   t2, 42             # garante max 42 (col+3 = 45, antes da zebra 47)
+    li   t3, 10
+    rem  t2, t2, t3         # 0..9
+
+    li   t3, 5
+    bge  t2, t3, gi_dir
+    # Faixa esquerda: col = 18 + t2*2   (18, 20, 22, 24, 26)
+    slli t2, t2, 1
+    addi t2, t2, 18
+    j    gi_ok
+gi_dir:
+    # Faixa direita: col = 34 + (t2-5)*2   (34, 36, 38, 40, 42)
+    addi t2, t2, -5
+    slli t2, t2, 1
+    addi t2, t2, 34
 gi_ok:
 
     # Cor: bits 5..6 dao 0..3
