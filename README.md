@@ -26,16 +26,17 @@ O jogo está **completamente jogável e com renderização gráfica colorida**:
 - **Pista preta** com **zebras vermelho/branco animadas** nas bordas
 - **Faixa amarela tracejada** no centro da pista, animada para dar sensação de movimento
 - **Carro do jogador** vermelho na parte inferior da tela
-- **Carros inimigos** em 4 cores (azul, laranja, verde-água, magenta) descendo pela pista, sempre dentro dos limites da pista (nunca colidindo visualmente com as zebras)
+- **Carros inimigos** em 4 cores (azul, laranja, verde-água, magenta) descendo pela pista em **duas faixas laterais** — cols `{18, 20, 22, 24, 26}` à esquerda e `{34, 36, 38, 40, 42}` à direita —, nunca cruzando a faixa amarela central
+- **Pista anda sozinha** a ~12 fps com `syscall 32` (sleep 80 ms); `avancar_pista` a cada 4 frames para dar tempo de reação
+- **Input não-bloqueante via MMIO** (`0xFFFF0000`/`0xFFFF0004`) — o jogo flui mesmo sem teclas; controles via janela do *Keyboard and Display MMIO Simulator*
 - Movimento lateral do carro do jogador com *bounds checking*
-- Movimento vertical simulado por *scroll* do vetor de inimigos
 - Geração pseudo-aleatória de inimigos (LCG em registradores)
-- Detecção de colisão por sobreposição retangular
+- Detecção de colisão por sobreposição retangular com *threshold* 5 (contato lateral já dispara)
 - Sistema de 3 vidas com invencibilidade temporária (8 *frames*)
 - Efeito visual de pisca durante invencibilidade
-- Placar +1 por *frame* sobrevivido (estilo Enduro original)
-- HUD textual na aba *Run I/O* com *frame*, vidas e *score*
-- Tela de *game over* com placar final
+- Placar +1 a cada *scroll* sobrevivido
+- **HUD gráfica no próprio bitmap**: vidas como quadradinhos vermelhos no gramado esquerdo; *score* como dígitos brancos 3×5 (fonte bitmap *custom*) no gramado direito — sem mais saída textual na *Run I/O* durante o jogo
+- Tela de *game over* com placar final na *Run I/O*
 
 **Otimização chave de performance:** o cenário (gramado + pista) é pintado **uma única vez** no início; a cada *frame* apenas as regiões que mudam são repintadas (zebras animadas, faixa central, posições antigas e novas dos carros). Isso reduziu o custo do *render* de ~20 000 para ~700 instruções por *frame*.
 
@@ -43,10 +44,10 @@ O jogo está **completamente jogável e com renderização gráfica colorida**:
 
 ## Como executar
 
-> **A configuração do Bitmap Display é obrigatória.** Sem ela, o jogo monta mas dispara um erro "address out of range" assim que tenta pintar o primeiro pixel.
+> **Duas ferramentas do RARS precisam estar conectadas antes do `F5`.** Sem o *Bitmap Display* o jogo dispara `address out of range` ao pintar o primeiro pixel; sem o *Keyboard and Display MMIO Simulator* o input não é lido (o jogo roda mas o carrinho não se move).
 
 1. Instale o [RARS](https://github.com/TheThirdOne/rars/releases) (requer Java 8+).
-2. Abra `enduro.asm` no RARS.
+2. Abra `enduro e3.asm` no RARS.
 3. Vá em **Tools → Bitmap Display** e configure:
 
 | Campo | Valor |
@@ -57,27 +58,31 @@ O jogo está **completamente jogável e com renderização gráfica colorida**:
 | Display Height in Pixels | `512` |
 | Base address for display | `0x10010000 (static data)` |
 
-4. Clique em **Connect to Program** e **mantenha a janela aberta**.
-5. Volte à janela principal do RARS, pressione **F3** para *Assemble* e **F5** para *Run*.
-6. Foque a aba **Run I/O** para usar os controles.
+   Clique em **Connect to Program** e **mantenha a janela aberta**.
+
+4. Vá em **Tools → Keyboard and Display MMIO Simulator**, clique em **Connect to Program** e **mantenha a janela aberta** (sem isso o programa não recebe teclas).
+
+5. Volte à janela principal, pressione **F3** para *Assemble* e **F5** para *Run*.
+
+6. Para mover o carrinho, clique na caixa de texto **inferior (KEYBOARD)** da janela do MMIO Simulator — é nela que as teclas são enviadas ao endereço `0xFFFF0004` que o programa lê.
 
 ### Controles
 
 | Tecla | Ação |
 |---|---|
-| `a` | Mover carro para a esquerda |
-| `d` | Mover carro para a direita |
-| `espaço` (ou qualquer tecla) | Avançar a pista sem mover o carro |
+| `a` | Mover carro 2 pixels para a esquerda |
+| `d` | Mover carro 2 pixels para a direita |
 | `q` | Sair do jogo |
 
-> No RARS é necessário pressionar **Enter** após cada tecla, pois `read_char` (*syscall* 12) lê de *stdin* em modo de linha. Para ver a animação fluir, basta apertar a tecla várias vezes seguidas.
+> O input é **não-bloqueante** (lido por *polling* MMIO em `0xFFFF0000`). A pista anda sozinha — você só precisa apertar `a`/`d` quando quiser se deslocar. Não precisa de Enter depois.
 
 ### Solução de problemas comuns
 
 - **"Address out of range 0xff000000"** — você esqueceu de clicar em *Connect to Program* na janela do Bitmap Display, ou fechou a janela antes de rodar.
+- **Carrinho não se move quando aperto `a`/`d`** — você esqueceu de abrir e conectar o *Keyboard and Display MMIO Simulator*, ou está digitando no Run I/O em vez da caixa KEYBOARD do MMIO Simulator.
 - **Tela toda preta com pixels coloridos esquisitos** — o endereço base no Bitmap Display não bate com o `BITMAP_BASE` definido no código (`0x10010000`).
-- **Erro "instrução desconhecida `mul`"** — vá em *Settings → RISC-V Settings* e habilite a extensão **RV32M**.
-- **Carros sumindo nas bordas da pista** — corrigido nesta versão: a geração de inimigos é restrita às colunas 18 a 42, mantendo distância segura das zebras animadas.
+- **Erro "instrução desconhecida `mul`/`rem`/`div`"** — vá em *Settings → RISC-V Settings* e habilite a extensão **RV32M**.
+- **Jogo termina em ~3 segundos** — quase certo que o sleep `syscall 32` não está habilitado no seu RARS; verifique se a opção *Settings → Enable system call extensions* está marcada.
 
 ---
 
@@ -98,11 +103,12 @@ O jogo está **completamente jogável e com renderização gráfica colorida**:
 ```
 
 - Colunas 0–15 e 48–63: **gramado verde** (estático)
+- Cantos superiores do gramado: **HUD gráfica** — vidas (esq.) e *score* (dir.)
 - Colunas 16 e 47: **zebras** alternando vermelho/branco (animadas com `s3`)
 - Colunas 17–46: **pista preta**
 - Colunas 31–32: **faixa amarela tracejada** (animada com `s3`)
-- Carros inimigos: colunas 18 a 42 (sempre dentro da pista)
-- Carro do jogador: linha 56, controlado por `a`/`d`
+- Carros inimigos: faixa esquerda `{18, 20, 22, 24, 26}` ou faixa direita `{34, 36, 38, 40, 42}` — nunca no meio (preserva a faixa amarela)
+- Carro do jogador: linha 56, controlado por `a`/`d` (range 18 a 42)
 
 ---
 
@@ -162,21 +168,26 @@ Todo o estado global do jogo é mantido em registradores `s` (*callee-saved*):
 
 ```
 main
- ├── pintar_cenario_inicial   pinta gramado + pista UMA VEZ
- └── game_loop
-       ├── atualizar_zebras        repinta zebras animadas e faixa central
-       ├── atualizar_inimigos      apaga posição antiga, desenha nova
+ ├── pintar_cenario_inicial    pinta gramado + pista UMA VEZ
+ └── game_loop                  (loop com sleep 80 ms / ~12 fps)
+       ├── ler_input             MMIO 0xFFFF0000 (NÃO bloqueante)
+       ├── processar_tecla       atualiza s0 com base na tecla
+       ├── (a cada 4 frames):
+       │     ├── avancar_pista   rola vetor de inimigos
+       │     │     └── gerar_inimigo   LCG + 2 faixas laterais
+       │     └── pontuar         +1 por scroll sobrevivido
+       ├── checar_colisao        sobreposição retangular (threshold 5)
+       ├── atualizar_inimigos    apaga posição antiga, desenha nova
        │     └── desenhar_carro
-       ├── atualizar_jogador       move o carro vermelho do jogador
+       ├── atualizar_zebras      repinta zebras + faixa central
+       │                          (POR CIMA dos inimigos: preserva faixa)
+       ├── atualizar_jogador     desenha jogador (POR CIMA da faixa: sólido)
        │     └── desenhar_carro
-       ├── hud_texto               imprime frame, vidas, score na Run I/O
-       ├── ler_input               syscall 12 (read char)
-       ├── processar_tecla         atualiza s0 com base na tecla
-       ├── avancar_pista           rola vetor de inimigos
-       │     └── gerar_inimigo     LCG + cor + coluna
-       ├── checar_colisao          sobreposição retangular
-       └── pontuar                 +1 por frame sobrevivido
+       └── desenhar_hud_grafico  vidas (esq.) e score (dir.) no bitmap
+             └── desenhar_digito  fonte bitmap 3×5
 ```
+
+**Ordem importante:** input/lógica/colisão **antes** do render para garantir que o que é renderizado é exatamente o que foi checado por colisão. `atualizar_zebras` roda **depois** dos inimigos para que a faixa central nunca seja apagada pelo *erase* de um inimigo que passa pela coluna 31/32 (embora hoje os inimigos sejam restritos a faixas laterais, a ordem se mantém pela robustez). `atualizar_jogador` roda **por último** entre os elementos de pista para que o jogador apareça sólido por cima de tudo (sem a faixa tracejada atravessando-o).
 
 ---
 
