@@ -724,7 +724,10 @@ cc_check:
     bge  t3, zero, cc_abs
     sub  t3, zero, t3
 cc_abs:
-    li   t4, 4
+    # Threshold 5: cars 4px de largura encostados lateralmente (|diff|=4)
+    # tambem contam como colisao. Sem isso, dois carros adjacentes
+    # parecem se tocar visualmente sem disparar nada.
+    li   t4, 5
     bge  t3, t4, cc_fim
 
     addi s6, s6, -1
