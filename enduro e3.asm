@@ -335,8 +335,7 @@ atualizar_jogador:
 
     mv   a0, t1
     li   a1, 56
-    li   a2, COR_PISTA
-    jal  ra, desenhar_carro
+    jal  ra, apagar_jogador_preservando_faixa
 
 aj_skip_apaga:
     la   t0, pos_anterior
@@ -392,6 +391,50 @@ dc_prox:
     j    dc_y
 dc_done:
 dc_skip:
+    jr   ra
+
+# ----------------------------------------------------------------------
+# apagar_jogador_preservando_faixa: pinta retangulo 4x6 em (a0=x, a1=y)
+# com COR_PISTA (cinza), mas PULA as colunas 31 e 32 para nao apagar
+# pixels da faixa amarela central. Usado apenas para apagar a posicao
+# anterior do jogador.
+# ----------------------------------------------------------------------
+apagar_jogador_preservando_faixa:
+    li   t0, 60
+    bge  a0, t0, ajpf_skip
+    li   t0, 58
+    bge  a1, t0, ajpf_skip
+
+    li   t0, 0
+ajpf_y:
+    li   t1, 6
+    beq  t0, t1, ajpf_done
+    li   t2, 0
+ajpf_x:
+    li   t3, 4
+    beq  t2, t3, ajpf_prox
+
+    add  t4, a0, t2          # x absoluto = a0 + t2
+    li   t5, 31
+    beq  t4, t5, ajpf_pula   # pula faixa col 31
+    li   t5, 32
+    beq  t4, t5, ajpf_pula   # pula faixa col 32
+
+    add  t5, a1, t0          # y absoluto
+    slli t6, t5, 6           # y * 64
+    add  t6, t6, t4          # + x
+    slli t6, t6, 2           # * 4
+    add  t6, t6, s8
+    li   t5, COR_PISTA
+    sw   t5, 0(t6)
+ajpf_pula:
+    addi t2, t2, 1
+    j    ajpf_x
+ajpf_prox:
+    addi t0, t0, 1
+    j    ajpf_y
+ajpf_done:
+ajpf_skip:
     jr   ra
 
 # ----------------------------------------------------------------------
