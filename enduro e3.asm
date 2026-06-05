@@ -35,14 +35,10 @@
 .data
 .align 2
 
-# Bitmap ocupa 16384 bytes (64*64*4). Reservar primeiro para nao
-# conflitar com as outras variaveis na area visivel.
 bitmap_area:   .space 16384
 
 pos_anterior:  .word 30
 
-# inimigos[i] e ini_anterior[i]: byte 0 = coluna x (0..63) ou 0xFF
-#                                byte 1 = cor (0..3)
 inimigos:      .word 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
                .word 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
 
@@ -51,20 +47,17 @@ ini_anterior:  .word 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
 
 tabela_cores:  .word COR_INIMIGO1, COR_INIMIGO2, COR_INIMIGO3, COR_INIMIGO4
 
-# Fonte 3x5 para digitos 0-9. Cada digito = 5 words (1 por linha).
-# Bits da word: bit 0 = col esquerda, bit 1 = meio, bit 2 = col direita.
-# Indice no array: digito * 5 + linha.
 fonte_dig:
-    .word 0x7, 0x5, 0x5, 0x5, 0x7   # 0
-    .word 0x2, 0x3, 0x2, 0x2, 0x7   # 1
-    .word 0x7, 0x4, 0x7, 0x1, 0x7   # 2
-    .word 0x7, 0x4, 0x7, 0x4, 0x7   # 3
-    .word 0x5, 0x5, 0x7, 0x4, 0x4   # 4
-    .word 0x7, 0x1, 0x7, 0x4, 0x7   # 5
-    .word 0x7, 0x1, 0x7, 0x5, 0x7   # 6
-    .word 0x7, 0x4, 0x2, 0x2, 0x2   # 7
-    .word 0x7, 0x5, 0x7, 0x5, 0x7   # 8
-    .word 0x7, 0x5, 0x7, 0x4, 0x7   # 9
+    .word 0x7, 0x5, 0x5, 0x5, 0x7
+    .word 0x2, 0x3, 0x2, 0x2, 0x7
+    .word 0x7, 0x4, 0x7, 0x1, 0x7
+    .word 0x7, 0x4, 0x7, 0x4, 0x7
+    .word 0x5, 0x5, 0x7, 0x4, 0x4
+    .word 0x7, 0x1, 0x7, 0x4, 0x7
+    .word 0x7, 0x1, 0x7, 0x5, 0x7
+    .word 0x7, 0x4, 0x2, 0x2, 0x2
+    .word 0x7, 0x5, 0x7, 0x5, 0x7
+    .word 0x7, 0x5, 0x7, 0x4, 0x7
 
 msg_titulo:    .asciz "=== ENDURO RV32I (Grafico) ===\n"
 msg_controles: .asciz "Digite na janela do MMIO Simulator: 'a'=esq, 'd'=dir, 'q'=sair\n"
@@ -107,29 +100,23 @@ main:
 game_loop:
     beqz s4, fim_jogo
 
-    # ---- INPUT todo frame (responsivo) ----
     jal  ra, ler_input
     jal  ra, processar_tecla
 
-    # ---- SCROLL da pista a cada 4 frames (inimigos descem mais devagar) ----
     andi t0, s3, 0x3
     bnez t0, gl_no_scroll
     jal  ra, avancar_pista
     jal  ra, pontuar
 gl_no_scroll:
 
-    # Colisao checada todo frame (inclui countdown de invencibilidade)
     jal  ra, checar_colisao
 
-    # ---- RENDER: inimigos -> zebras (faixa sobre inimigos) -> jogador (solido por cima) ----
     jal  ra, atualizar_inimigos
     jal  ra, atualizar_zebras
     jal  ra, atualizar_jogador
 
-    # HUD grafico (vidas + score no proprio bitmap) - nao printa nada em Run I/O
     jal  ra, desenhar_hud_grafico
 
-    # Delay ~80ms (~12fps) para a pista andar sozinha
     li   a0, 80
     li   a7, 32
     ecall
@@ -137,9 +124,6 @@ gl_no_scroll:
     addi s3, s3, 1
     j    game_loop
 
-# ----------------------------------------------------------------------
-# pintar_cenario_inicial: pinta gramado + pista uma unica vez
-# ----------------------------------------------------------------------
 pintar_cenario_inicial:
     addi sp, sp, -8
     sw   ra, 0(sp)
@@ -180,9 +164,6 @@ pci_done:
     addi sp, sp, 8
     jr   ra
 
-# ----------------------------------------------------------------------
-# atualizar_zebras: repinta colunas 16, 47, 31, 32 com base em s3
-# ----------------------------------------------------------------------
 atualizar_zebras:
     addi sp, sp, -4
     sw   s9, 0(sp)
@@ -235,12 +216,6 @@ az_done:
     addi sp, sp, 4
     jr   ra
 
-# ----------------------------------------------------------------------
-# atualizar_inimigos: para cada inimigo:
-#   1) Se ini_anterior[i] tem coluna valida, apaga
-#   2) Se inimigos[i] tem coluna valida, desenha
-#   3) ini_anterior[i] = inimigos[i]
-# ----------------------------------------------------------------------
 atualizar_inimigos:
     addi sp, sp, -8
     sw   ra, 0(sp)
@@ -251,22 +226,18 @@ ai_loop:
     li   t0, 8
     beq  s9, t0, ai_done
 
-    # offset = i * 4
     slli s10, s9, 2
 
-    # ----- APAGAR posicao anterior -----
     la   t0, ini_anterior
     add  t0, t0, s10
     lw   t1, 0(t0)
-    andi t2, t1, 0xFF       # coluna anterior
+    andi t2, t1, 0xFF
     li   t3, 0xFF
     beq  t2, t3, ai_pinta_novo
 
-    # Verifica se coluna anterior eh valida (0..63)
     li   t3, 64
     bge  t2, t3, ai_pinta_novo
 
-    # y = i*8 + 1
     slli t4, s9, 3
     addi t4, t4, 1
     mv   a0, t2
@@ -275,12 +246,10 @@ ai_loop:
     jal  ra, desenhar_carro
 
 ai_pinta_novo:
-    # ----- DESENHAR nova posicao -----
     la   t0, inimigos
     add  t0, t0, s10
     lw   t1, 0(t0)
 
-    # Salvar em ini_anterior para o proximo frame
     la   t0, ini_anterior
     add  t0, t0, s10
     sw   t1, 0(t0)
@@ -289,11 +258,9 @@ ai_pinta_novo:
     li   t3, 0xFF
     beq  t2, t3, ai_prox
 
-    # Coluna valida?
     li   t3, 64
     bge  t2, t3, ai_prox
 
-    # Cor: tabela_cores[(t1 >> 8) & 3]
     srli t3, t1, 8
     andi t3, t3, 0x3
     slli t3, t3, 2
@@ -317,9 +284,6 @@ ai_done:
     addi sp, sp, 8
     jr   ra
 
-# ----------------------------------------------------------------------
-# atualizar_jogador: apaga posicao anterior, pinta nova
-# ----------------------------------------------------------------------
 atualizar_jogador:
     addi sp, sp, -4
     sw   ra, 0(sp)
@@ -327,7 +291,6 @@ atualizar_jogador:
     la   t0, pos_anterior
     lw   t1, 0(t0)
 
-    # Validacao: 0 <= t1 < 60 (4 pixels do carro precisam caber)
     li   t2, 0
     blt  t1, t2, aj_skip_apaga
     li   t2, 60
@@ -356,16 +319,11 @@ aj_done:
     addi sp, sp, 4
     jr   ra
 
-# ----------------------------------------------------------------------
-# desenhar_carro: pinta retangulo 4x6 em (a0=x, a1=y) com cor a2
-# Validacao: se x+4 > 64 ou y+6 > 64, nao desenha
-# ----------------------------------------------------------------------
 desenhar_carro:
-    # Validacao defensiva
     li   t0, 60
-    bge  a0, t0, dc_skip    # x >= 60 -> nao cabe
+    bge  a0, t0, dc_skip
     li   t0, 58
-    bge  a1, t0, dc_skip    # y >= 58 -> nao cabe
+    bge  a1, t0, dc_skip
 
     li   t0, 0
 dc_y:
@@ -393,12 +351,6 @@ dc_done:
 dc_skip:
     jr   ra
 
-# ----------------------------------------------------------------------
-# apagar_jogador_preservando_faixa: pinta retangulo 4x6 em (a0=x, a1=y)
-# com COR_PISTA (cinza), mas PULA as colunas 31 e 32 para nao apagar
-# pixels da faixa amarela central. Usado apenas para apagar a posicao
-# anterior do jogador.
-# ----------------------------------------------------------------------
 apagar_jogador_preservando_faixa:
     li   t0, 60
     bge  a0, t0, ajpf_skip
@@ -414,16 +366,16 @@ ajpf_x:
     li   t3, 4
     beq  t2, t3, ajpf_prox
 
-    add  t4, a0, t2          # x absoluto = a0 + t2
+    add  t4, a0, t2
     li   t5, 31
-    beq  t4, t5, ajpf_pula   # pula faixa col 31
+    beq  t4, t5, ajpf_pula
     li   t5, 32
-    beq  t4, t5, ajpf_pula   # pula faixa col 32
+    beq  t4, t5, ajpf_pula
 
-    add  t5, a1, t0          # y absoluto
-    slli t6, t5, 6           # y * 64
-    add  t6, t6, t4          # + x
-    slli t6, t6, 2           # * 4
+    add  t5, a1, t0
+    slli t6, t5, 6
+    add  t6, t6, t4
+    slli t6, t6, 2
     add  t6, t6, s8
     li   t5, COR_PISTA
     sw   t5, 0(t6)
@@ -437,29 +389,24 @@ ajpf_done:
 ajpf_skip:
     jr   ra
 
-# ----------------------------------------------------------------------
-# desenhar_digito: pinta um digito 3x5 em (a0=x, a1=y) com cor a3
-#   a2 = digito 0..9
-# Usa fonte_dig (5 words por digito).
-# ----------------------------------------------------------------------
 desenhar_digito:
     li   t0, 10
-    bgeu a2, t0, dd_done    # digito invalido
+    bgeu a2, t0, dd_done
 
-    li   t0, 20             # 5 linhas * 4 bytes
+    li   t0, 20
     mul  t0, a2, t0
     la   t1, fonte_dig
-    add  t1, t1, t0         # ponteiro para os 5 words do digito
+    add  t1, t1, t0
 
-    li   t2, 0              # linha 0..4
+    li   t2, 0
 dd_row:
     li   t3, 5
     bge  t2, t3, dd_done
 
-    lw   t4, 0(t1)          # padrao da linha
+    lw   t4, 0(t1)
     addi t1, t1, 4
 
-    li   t5, 0              # coluna 0..2
+    li   t5, 0
 dd_col:
     li   t6, 3
     bge  t5, t6, dd_rnext
@@ -484,13 +431,6 @@ dd_rnext:
 dd_done:
     jr   ra
 
-# ----------------------------------------------------------------------
-# desenhar_hud_grafico: pinta vidas (esq) e score (dir) no proprio bitmap.
-# Apaga as faixas de gramado das colunas 0..15 e 48..63 (y=0..7) com
-# verde, depois desenha:
-#   - vidas como quadradinhos 2x3 vermelhos a esquerda
-#   - score (s2) como ate 4 digitos brancos a direita
-# ----------------------------------------------------------------------
 desenhar_hud_grafico:
     addi sp, sp, -16
     sw   ra, 0(sp)
@@ -498,7 +438,6 @@ desenhar_hud_grafico:
     sw   s10, 8(sp)
     sw   s11, 12(sp)
 
-    # ---- Limpa faixa esquerda (0..15) e direita (48..63), y=0..7 ----
     li   s9, 0
 dhg_cy:
     li   t0, 8
@@ -510,13 +449,11 @@ dhg_cx:
     bge  s10, t0, dhg_cynext
 
     slli t1, s9, 6
-    # esquerda: x = s10
     add  t2, t1, s10
     slli t2, t2, 2
     add  t2, t2, s8
     li   t3, COR_GRAMADO
     sw   t3, 0(t2)
-    # direita: x = 48 + s10
     addi t4, s10, 48
     add  t2, t1, t4
     slli t2, t2, 2
@@ -530,7 +467,6 @@ dhg_cynext:
     j    dhg_cy
 
 dhg_vidas:
-    # Vidas: quadrados 2x3 vermelhos. x base = 2 + s9*3, y = 2..4. Max 5.
     li   s9, 0
 dhg_vloop:
     bge  s9, s6, dhg_score
@@ -539,18 +475,18 @@ dhg_vloop:
 
     li   t0, 3
     mul  t0, s9, t0
-    addi s10, t0, 2         # x base do quadrado
+    addi s10, t0, 2
 
-    li   s11, 0             # linha 0..2
+    li   s11, 0
 dhg_vy:
     li   t0, 3
     bge  s11, t0, dhg_vnext
-    li   t1, 0              # col 0..1
+    li   t1, 0
 dhg_vx:
     li   t0, 2
     bge  t1, t0, dhg_vynext
 
-    addi t2, s11, 2         # y = 2 + s11
+    addi t2, s11, 2
     slli t2, t2, 6
     add  t3, s10, t1
     add  t2, t2, t3
@@ -569,11 +505,9 @@ dhg_vnext:
     j    dhg_vloop
 
 dhg_score:
-    # Score (s2): ate 4 digitos a partir da direita.
-    # Digito mais a direita em x=60, espacamento de 4 (3 + 1 espaco).
-    mv   s9, s2             # valor restante
-    li   s10, 60            # x do digito atual
-    li   s11, 0             # quantos digitos ja desenhados
+    mv   s9, s2
+    li   s10, 60
+    li   s11, 0
 
 dhg_sloop:
     li   t0, 4
@@ -585,13 +519,13 @@ dhg_sloop:
 
     mv   a0, s10
     li   a1, 2
-    li   a3, COR_BORDA_W    # branco
+    li   a3, COR_BORDA_W
     jal  ra, desenhar_digito
 
     addi s10, s10, -4
     addi s11, s11, 1
 
-    bnez s9, dhg_sloop      # continua se ainda tem digito significativo
+    bnez s9, dhg_sloop
 
 dhg_done:
     lw   s11, 12(sp)
@@ -601,7 +535,6 @@ dhg_done:
     addi sp, sp, 16
     jr   ra
 
-# ----------------------------------------------------------------------
 hud_texto:
     addi sp, sp, -4
     sw   ra, 0(sp)
@@ -640,10 +573,6 @@ hud_sf:
     addi sp, sp, 4
     jr   ra
 
-# ler_input: leitura nao-bloqueante via MMIO (Keyboard and Display MMIO Simulator)
-#   0xFFFF0000 = Receiver Control (bit 0 = Ready)
-#   0xFFFF0004 = Receiver Data (caractere; ler limpa o Ready)
-# Retorna a0 = caractere (ou 0 se nenhuma tecla)
 ler_input:
     li   t0, 0xFFFF0000
     lw   t1, 0(t0)
@@ -707,9 +636,6 @@ ap_done:
     addi sp, sp, 4
     jr   ra
 
-# Gera inimigo: ~50% vazio, ~50% com coluna em uma das duas faixas seguras
-# Faixas: esquerda {18, 20, 22, 24, 26} | direita {34, 36, 38, 40, 42}
-# Evita cols 28, 30, 32 que fariam o sprite 4px sobrepor a faixa central (31, 32)
 gerar_inimigo:
     li   t0, 1103515245
     mul  s1, s1, t0
@@ -720,26 +646,22 @@ gerar_inimigo:
     andi t1, t0, 1
     beqz t1, gi_vazio
 
-    # Sorteia indice 0..9 (10 posicoes, 5 por faixa)
     srli t2, t0, 1
-    andi t2, t2, 0xF        # 0..15
+    andi t2, t2, 0xF
     li   t3, 10
-    rem  t2, t2, t3         # 0..9
+    rem  t2, t2, t3
 
     li   t3, 5
     bge  t2, t3, gi_dir
-    # Faixa esquerda: col = 18 + t2*2   (18, 20, 22, 24, 26)
     slli t2, t2, 1
     addi t2, t2, 18
     j    gi_ok
 gi_dir:
-    # Faixa direita: col = 34 + (t2-5)*2   (34, 36, 38, 40, 42)
     addi t2, t2, -5
     slli t2, t2, 1
     addi t2, t2, 34
 gi_ok:
 
-    # Cor: bits 5..6 dao 0..3
     srli t3, t0, 5
     andi t3, t3, 0x3
     slli t3, t3, 8
@@ -767,9 +689,6 @@ cc_check:
     bge  t3, zero, cc_abs
     sub  t3, zero, t3
 cc_abs:
-    # Threshold 5: cars 4px de largura encostados lateralmente (|diff|=4)
-    # tambem contam como colisao. Sem isso, dois carros adjacentes
-    # parecem se tocar visualmente sem disparar nada.
     li   t4, 5
     bge  t3, t4, cc_fim
 
